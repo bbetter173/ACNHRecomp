@@ -1,0 +1,56 @@
+name: Pipeline cache tests
+
+on:
+  pull_request:
+    paths:
+      - 'runtime/**'
+      - 'tests/pipeline_cache_test.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/pipeline-cache-tests.yml'
+  push:
+    paths:
+      - 'runtime/**'
+      - 'tests/pipeline_cache_test.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/pipeline-cache-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cache:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - name: Vulkan headers
+        run: |
+          headers="$RUNNER_TEMP"
+          if [[ "$RUNNER_OS" == Windows ]]; then headers=$(cygpath -u "$RUNNER_TEMP"); fi
+          curl -fsSL https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.4.357.tar.gz |
+            tar -xz -C "$headers"
+      - name: Build cache tests without the game or a GPU
+        run: |
+          compiler=()
+          headers="$RUNNER_TEMP"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            headers=$(cygpath -m "$RUNNER_TEMP")
+            export PATH="/c/Program Files/LLVM/bin:$PATH"
+            compiler=(-G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl)
+          fi
+          cmake -S . -B private/cache-tests "${compiler[@]}" -DNX_GAME=acnh -DNX_TESTS=ON -DNX_LAUNCHER=OFF \
+            -DNX_TEST_VULKAN_INCLUDE="$headers/Vulkan-Headers-1.4.357/include"
+          cmake --build private/cache-tests --config Release --target pipeline_cache_test --parallel 2
+      - name: Test cache failures and shutdown
+        run: ctest --test-dir private/cache-tests -C Release -R '^pipeline_cache_' --output-on-failure

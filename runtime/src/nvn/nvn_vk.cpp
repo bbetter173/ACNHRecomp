@@ -965,11 +965,13 @@ void presenter_main() {
             g_pres_pending = false;
         }
         plat::frame_helper_tick();
+        const uint64_t started = plat::monotonic_ns();
         if (job.before) {  // reset once signalled (a lost device: left as it is, nothing waits on it again)
             VkResult w;
             while ((w = p_vkWaitForFences(g_device, 1, &job.before, VK_TRUE, 1'000'000'000ull)) == VK_TIMEOUT) {}
             if (w == VK_SUCCESS) p_vkResetFences(g_device, 1, &job.before);
         }
+        const uint64_t fenced = plat::monotonic_ns();
         VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
         pi.waitSemaphoreCount = 1;
         pi.pWaitSemaphores = &job.rendered;
@@ -979,14 +981,26 @@ void presenter_main() {
         VkPresentTimesInfoGOOGLE times{VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE};
         if (job.timing) times.swapchainCount = 1, times.pTimes = &job.when, pi.pNext = &times;
         VkResult r;
+        uint64_t locked, presented;
         {
             std::lock_guard q(g_queue_mx);
+            locked = plat::monotonic_ns();
             r = p_vkQueuePresentKHR(g_queue, &pi);
+            presented = plat::monotonic_ns();
         }
-        std::lock_guard lk(g_pres_mx);
-        g_pres_result = r;
-        g_pres_done = true;
-        g_pres_cv.notify_all();
+        {
+            std::lock_guard lk(g_pres_mx);
+            g_pres_result = r;
+            g_pres_done = true;
+            g_pres_cv.notify_all();
+        }
+        static const double limit = std::getenv("NX_HITCH_MS") ? std::atof(std::getenv("NX_HITCH_MS")) : 50.0;
+        static unsigned slow = 0;
+        if (double(presented - started) / 1e6 >= limit && slow < 300) {
+            slow++;
+            log("nvn/vk: slow presenter: fence %.2f, queue lock %.2f, driver present %.2f ms",
+                double(fenced - started) / 1e6, double(locked - fenced) / 1e6, double(presented - locked) / 1e6);
+        }
     }
 }
 
@@ -1019,20 +1033,32 @@ void presenter_post(const PendingPresent& job) {
     g_pres_cv.notify_all();
 }
 
-// Where a present's time goes (acquire, recording, submit, vblank hold, vkQueuePresentKHR), logged every 600 presents.
+// Keep individual slow presents as well as averages. In particular, presenter_wait and slot retirement happen
+// before image acquisition and used to be absent from the breakdown.
 struct PresentParts {
-    uint64_t last = plat::monotonic_ns(), ns[5] = {};
+    uint64_t last = plat::monotonic_ns(), ns[8] = {};
     void mark(int k) {
         uint64_t now = plat::monotonic_ns();
         ns[k] = now - last, last = now;
     }
     void done(bool real) {
-        static uint64_t sum[2][5], n[2];
-        for (int k = 0; k < 5; k++) sum[real][k] += ns[k];
+        static uint64_t sum[2][8], n[2];
+        uint64_t total = 0;
+        for (int k = 0; k < 8; k++) sum[real][k] += ns[k], total += ns[k];
+        static const double limit = std::getenv("NX_HITCH_MS") ? std::atof(std::getenv("NX_HITCH_MS")) : 50.0;
+        static unsigned slow = 0;
+        if (double(total) / 1e6 >= limit && slow < 300) {
+            slow++;
+            log("nvn/vk: slow present (%s): handoff %.2f, slot %.2f, acquire %.2f, begin %.2f, record %.2f, "
+                "submit %.2f, vblank hold %.2f, queue present %.2f ms; refresh %.1f Hz, minimized %d",
+                real ? "game" : "repeat/generated", ns[0] / 1e6, ns[1] / 1e6, ns[2] / 1e6, ns[3] / 1e6,
+                ns[4] / 1e6, ns[5] / 1e6, ns[6] / 1e6, ns[7] / 1e6, double(plat::display_refresh_hz()), int(plat::window_minimized()));
+        }
         if (++n[real] % 600) return;
-        log("nvn/vk: present (%s, ms each): acquire %.2f, record %.2f, submit %.2f, vblank hold %.2f, queue present %.2f",
-            real ? "game frames" : "generated", sum[real][0] / 6e8, sum[real][1] / 6e8, sum[real][2] / 6e8,
-            sum[real][3] / 6e8, sum[real][4] / 6e8);
+        log("nvn/vk: present (%s, ms each): acquire %.2f, record %.2f, submit %.2f, vblank hold %.2f, queue present %.2f, "
+            "handoff %.2f, slot %.2f, begin %.2f",
+            real ? "game frames" : "repeat/generated", sum[real][2] / 6e8, sum[real][4] / 6e8, sum[real][5] / 6e8,
+            sum[real][6] / 6e8, sum[real][7] / 6e8, sum[real][0] / 6e8, sum[real][1] / 6e8, sum[real][3] / 6e8);
         for (auto& v : sum[real]) v = 0;
     }
 };
@@ -1042,18 +1068,21 @@ struct PresentParts {
 // the submit and the present.
 template <class Record>
 void present_image(const int32_t* crop, Record&& record) {
+    PresentParts parts;
     presenter_wait();
+    parts.mark(0);
     if (!g_swapchain) return;
     uint32_t index = 0;
     VkSemaphore acquired = async_gpu() ? frame_acquire_semaphore() : g_acquired;
-    PresentParts parts;
+    parts.mark(1);
     VkResult r = p_vkAcquireNextImageKHR(g_device, g_swapchain, UINT64_MAX, acquired, VK_NULL_HANDLE, &index);
     if (r == VK_ERROR_OUT_OF_DATE_KHR) {
         make_swapchain();
         return;
     }
+    parts.mark(2);
     if (!check(r, "vkAcquireNextImageKHR") || !begin()) return;
-    parts.mark(0);
+    parts.mark(3);
     gpu_busy_note_pass("present (frame generation, scaling, overlay)");  // NX_GPU_PROFILE=3: its own label
     bool real = true;
     GpuImage* src = record(g_cb, real);
@@ -1116,7 +1145,7 @@ void present_image(const int32_t* crop, Record&& record) {
     if (dump) transition(g_cb, *src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);  // the present pass left it sampled
     dump = dump && frame_dump_record(g_cb, *src);
     VkSemaphore rendered = async_gpu() ? frame_rendered_semaphore(index) : g_rendered;
-    parts.mark(1);
+    parts.mark(4);
     if (async_gpu())  // the blit's fence is not waited for (vkQueuePresentKHR waits on `rendered`); a dumped frame is
         frame_submit(acquired, rendered, {}, dump);
     else
@@ -1141,7 +1170,7 @@ void present_image(const int32_t* crop, Record&& record) {
         std::lock_guard q(g_queue_mx);
         g_gen_fence_used = g_gen_fence && p_vkQueueSubmit(g_queue, 0, nullptr, g_gen_fence) == VK_SUCCESS;
     }
-    parts.mark(2);
+    parts.mark(5);
     if (dump && due) frame_dump_write(*src, presents);
     if (due) debug_dump_textures(presents);
     bool shown_now = false;
@@ -1153,7 +1182,7 @@ void present_image(const int32_t* crop, Record&& record) {
     }
     VkPresentTimeGOOGLE when{uint32_t(display_timing_next(real)), 0};
     if (real) vblank_hold();  // on the display's vblank its interval asks for (hle_vi.cpp)
-    parts.mark(3);
+    parts.mark(6);
     if (handed) {
         // The fence is for the image after this one (the repeat) when it is this frame's own.
         const bool give = g_gen_fence_used && !(fence_own && !framegen_wanted());
@@ -1171,7 +1200,7 @@ void present_image(const int32_t* crop, Record&& record) {
         std::lock_guard q(g_queue_mx);
         r = p_vkQueuePresentKHR(g_queue, &pi);
     }
-    parts.mark(4);
+    parts.mark(7);
     parts.done(real);
     if (real) plat::frame_presented();  // cores, CPU time, present intervals (frame_stats.cpp)
     if (shown_now) {

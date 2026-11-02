@@ -27,6 +27,7 @@
 #include "config.h"
 #include "bug_report.h"
 #include "platform.h"
+#include "nvn/nvn_pipeline_cache.h"
 #include "platform_sdl.h"
 
 namespace nx {
@@ -70,6 +71,7 @@ void start_thread(ThreadFn fn, void* arg, size_t stack_size) {
 
 void exit_thread() { ExitThread(0); }
 void exit_process(int code) {
+    if (code == 0) nx::nvn::pipeline_cache_shutdown();
     std::fflush(nullptr);
     ExitProcess(UINT(code));
 }
