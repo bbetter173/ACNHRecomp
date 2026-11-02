@@ -122,7 +122,9 @@ SupportBuffer support_buffer_defaults() {
     SupportBuffer sb;
     std::memset(&sb, 0, sizeof sb);
     for (auto& s : sb.render_scale) s[0] = 1.0f;  // Ryujinx's SupportBufferUpdater: (1, 0, 0, 0) for all 73
+#ifndef NX_SHADERS_STANDALONE
     if (hdr_requested() != HdrOutput::Off) hdr_shader_settings(sb.hdr);
+#endif
     return sb;
 }
 

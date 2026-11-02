@@ -1879,6 +1879,7 @@ void ffx_fg_prepare(const TemporalInputs& in, const TemporalFrame& fr, uint32_t 
 void temporal_motion_draw(VkCommandBuffer, VkPipelineLayout, const ShaderInfo*, bool, bool, const int32_t*, uint64_t,
                           const uint8_t*, VkIndexType, uint64_t) {}
 void temporal_motion_none(VkCommandBuffer, VkPipelineLayout) {}
+void temporal_reactive_draw(VkCommandBuffer, VkPipelineLayout, bool) {}
 void temporal_allow(std::shared_ptr<const TemporalFrame>) {}
 void temporal_note_depth(GpuImage*) {}
 bool temporal_is_tonemap(const std::string&) { return false; }
