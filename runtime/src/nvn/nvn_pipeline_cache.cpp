@@ -58,12 +58,19 @@ VkPipelineCache pipeline_cache() {
     std::snprintf(name, sizeof name, "/pipelines_%04x_%04x.bin", p.vendorID, p.deviceID);
     g_path = plat::data_root() + name;
     std::vector<uint8_t> data;
-    if (FILE* f = plat::fopen_utf8(g_path, "rb")) {
-        plat::fseek64(f, 0, SEEK_END);
-        int64_t n = plat::ftell64(f);
-        plat::fseek64(f, 0, SEEK_SET);
-        if (n > 0) data.resize(size_t(n)), data.resize(std::fread(data.data(), 1, data.size(), f));
-        std::fclose(f);
+    std::error_code ec;
+    const std::filesystem::path path(std::u8string(g_path.begin(), g_path.end()));
+    if (std::filesystem::is_regular_file(path, ec)) {
+        if (FILE* f = plat::fopen_utf8(g_path, "rb")) {
+            if (plat::fseek64(f, 0, SEEK_END) == 0) {
+                const int64_t n = plat::ftell64(f);
+                if (n > 0 && plat::fseek64(f, 0, SEEK_SET) == 0) {
+                    data.resize(size_t(n));
+                    data.resize(std::fread(data.data(), 1, data.size(), f));
+                }
+            }
+            std::fclose(f);
+        }
     }
     VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
     ci.initialDataSize = data.size();
