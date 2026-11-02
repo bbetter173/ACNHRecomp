@@ -14,3 +14,9 @@
 31c3fa8  # guiTouchManager::update (main+31c3b60) before its hit tests, x24 = the manager (v3_0_3.cpp; 3.0.2 main+31c3f98)
 3c48c70  # focus manager input entry (v3_0_3.cpp; 3.0.2 main+3c48c60)
 3c4b20c  # button handler input entry (v3_0_3.cpp; 3.0.2 main+3c4b1fc)
+
+9d8430  # read-only message-reference parser entry (dialogue.cpp; NX_DIALOGUE_TRACE=1)
+9d85bc  # read-only message-reference parser return (dialogue.cpp; NX_DIALOGUE_TRACE=1)
+3c4ce3c  # read-only raw UTF-16 lookup result (dialogue.cpp; NX_DIALOGUE_TRACE=1)
+60f4f0  # read-only action dispatch entry and active flow identity (dialogue.cpp; NX_DIALOGUE_TRACE=1)
+60f7c4  # read-only action dispatch scope exit (dialogue.cpp; NX_DIALOGUE_TRACE=1)
