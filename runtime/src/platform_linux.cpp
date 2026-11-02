@@ -47,6 +47,7 @@
 #include "ui/ui.h"
 #include "bug_report.h"
 #include "platform.h"
+#include "nvn/nvn_pipeline_cache.h"
 
 namespace nx {
 void boot();
@@ -154,6 +155,7 @@ void start_thread(ThreadFn fn, void* arg, size_t stack_size) {
 
 void exit_thread() { pthread_exit(nullptr); }
 void exit_process(int code) {
+    if (code == 0) nx::nvn::pipeline_cache_shutdown();
     std::fflush(nullptr);
     _exit(code);
 }

@@ -49,6 +49,7 @@
 
 #include "kernel.h"
 #include "platform.h"
+#include "nvn/nvn_pipeline_cache.h"
 #include "config.h"
 #include "platform_android.h"
 
@@ -122,6 +123,7 @@ void start_thread(ThreadFn fn, void* arg, size_t stack_size) {
 
 void exit_thread() { pthread_exit(nullptr); }
 void exit_process(int code) {
+    if (code == 0) nx::nvn::pipeline_cache_shutdown();
     nx::log_flush();
     _exit(code);
 }
@@ -932,7 +934,7 @@ extern "C" void android_main(android_app* app) {
             android_poll_source* src;
             while (ALooper_pollOnce(100, nullptr, &events, reinterpret_cast<void**>(&src)) >= 0) {
                 if (src) src->process(app, src);
-                if (app->destroyRequested) nx::log_flush(), _exit(0);
+                if (app->destroyRequested) exit_process(0);
             }
         }
     }
@@ -1005,7 +1007,7 @@ extern "C" void android_main(android_app* app) {
         android_poll_source* src;
         while (ALooper_pollOnce(started ? 0 : 50, nullptr, &events, reinterpret_cast<void**>(&src)) >= 0) {
             if (src) src->process(app, src);
-            if (app->destroyRequested) nx::log_flush(), _exit(0);
+            if (app->destroyRequested) exit_process(0);
         }
         if (!started && g_window) {
             started = true;

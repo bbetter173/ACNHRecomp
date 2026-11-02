@@ -80,6 +80,20 @@ if(NX_TESTS AND NOT ANDROID)
     if(EXISTS "${CMAKE_SOURCE_DIR}/private/wonder/spirv")  # the game's own shaders: never in the repository
         add_test(NAME shader_cache COMMAND shader_cache_test "${CMAKE_SOURCE_DIR}/private/wonder")
     endif()
+    find_path(NX_TEST_VULKAN_INCLUDE vulkan/vulkan.h HINTS "${NX_VULKAN_INCLUDE}"
+              "${CMAKE_SOURCE_DIR}/private/third_party/Vulkan-Headers-1.4.357/include"
+              "$ENV{VULKAN_SDK}/Include" "$ENV{VULKAN_SDK}/include" /opt/homebrew/include)
+    if(NX_TEST_VULKAN_INCLUDE)
+        find_package(Threads REQUIRED)
+        add_executable(pipeline_cache_test tests/pipeline_cache_test.cpp runtime/src/nvn/nvn_pipeline_cache.cpp)
+        target_include_directories(pipeline_cache_test PRIVATE runtime/include runtime/src runtime/src/nvn "${NX_TEST_VULKAN_INCLUDE}")
+        target_link_libraries(pipeline_cache_test PRIVATE Threads::Threads)
+        foreach(case short-session roundtrip failed-open failed-write failed-replace incomplete-driver
+                     bad-header truncated-keys bad-string over-limit writer-join save-without-prewarm periodic-save retry-save)
+            add_test(NAME pipeline_cache_${case} COMMAND pipeline_cache_test ${case})
+            set_tests_properties(pipeline_cache_${case} PROPERTIES TIMEOUT 15)
+        endforeach()
+    endif()
     if(WIN32)
         add_executable(memguard_test tests/memguard_test.cpp)
         target_link_libraries(memguard_test PRIVATE psapi)
